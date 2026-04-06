@@ -173,10 +173,15 @@ async def process_drama_full(drama_id, chat_id, status_msg=None):
             # return False # Continue anyway? Or return False. Standard is return False.
 
         # 4. Hardsub and Merge
-        if status_msg: await status_msg.edit(f"🔥 Membakar subtitle & menggabungkan video...")
+        async def progress_callback(text):
+            if status_msg:
+                try:
+                    await status_msg.edit(text)
+                except:
+                    pass
+
         output_path = os.path.join(temp_dir, f"{title}.mp4")
-        
-        merge_success = await asyncio.get_event_loop().run_in_executor(None, merge_and_hardsub, video_dir, output_path)
+        merge_success = await merge_and_hardsub(video_dir, output_path, progress_callback)
         if not merge_success:
             if status_msg: await status_msg.edit("❌ Proses Hardsub/Merge Gagal.")
             return False
