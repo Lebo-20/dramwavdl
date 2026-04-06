@@ -32,7 +32,7 @@ async def upload_drama(client: TelegramClient, chat_id: int,
         import httpx
         poster_path = None
         try:
-            async with httpx.AsyncClient(timeout=30) as http_client:
+            async with httpx.AsyncClient(timeout=7200) as http_client:
                 resp = await http_client.get(poster_url)
                 if resp.status_code == 200:
                     poster_path = os.path.join(tempfile.gettempdir(), f"poster_{title[:20].replace(' ','_')}.jpg")

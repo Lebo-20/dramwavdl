@@ -7,3 +7,6 @@ __pycache__/
 list.txt
 processed.json
 tmp/
+tmp_*.json
+tmp_*.py
+tmp_*.txt
