@@ -16,7 +16,7 @@ async def get_popular_feed(page=1):
     url = f"{BASE_URL}/home"
     params = {"lang": "in"}
     
-    async with httpx.AsyncClient(timeout=7200) as client:
+    async with httpx.AsyncClient(timeout=14400) as client:
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -42,7 +42,7 @@ async def get_drama_detail(drama_id: str):
         "code": TOKEN
     }
     
-    async with httpx.AsyncClient(timeout=7200) as client:
+    async with httpx.AsyncClient(timeout=14400) as client:
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -60,7 +60,7 @@ async def search_drama(query: str):
         "lang": "in"
     }
     
-    async with httpx.AsyncClient(timeout=7200) as client:
+    async with httpx.AsyncClient(timeout=14400) as client:
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()

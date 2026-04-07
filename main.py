@@ -64,13 +64,22 @@ def get_panel_buttons():
 async def update_bot(event):
     if event.sender_id != ADMIN_ID: return
     import subprocess, sys
-    status_msg = await event.reply("🔄 Menarik pembaruan...")
+    status_msg = await event.reply("🔄 **Menarik pembaruan dari Git...**")
     try:
-        subprocess.run(["git", "pull"], check=True)
-        await status_msg.edit("✅ Update berhasil! Memulai ulang...")
+        # Menarik update
+        process = subprocess.run(["git", "pull"], capture_output=True, text=True)
+        output = process.stdout + process.stderr
+        
+        if "Already up to date" in output:
+            await status_msg.edit("✅ **Bot sudah versi terbaru.**")
+            return
+
+        await status_msg.edit(f"✅ **Update Berhasil!**\n\n```\n{output[:500]}\n```\n🔄 Memulai ulang bot...")
+        
+        # Restart file
         os.execl(sys.executable, sys.executable, *sys.argv)
     except Exception as e:
-        await status_msg.edit(f"❌ Gagal update: {e}")
+        await status_msg.edit(f"❌ **Gagal update:**\n`{e}`")
 
 @client.on(events.NewMessage(pattern='/panel'))
 async def panel(event):
