@@ -11,7 +11,7 @@ def create_progress_bar(percentage):
     bar = "■" * blocks + "□" * (10 - blocks)
     return f"|{bar}| {percentage}%"
 
-async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=None):
+async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=None, title=""):
     """
     Merges all episodes and burns subtitles into each before merging.
     """
@@ -37,8 +37,9 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
                 est_sec = int(est_remaining % 60)
                 
                 status_text = (
+                    f"🎬 **{title}**\n"
                     f"🔥 **Status: Burning Hardsub...**\n"
-                    f"🎬 Episode {i}/{total_videos}\n"
+                    f"🎞 Episode {i}/{total_videos}\n"
                     f"{create_progress_bar(percentage)}\n"
                     f"⏳ Estimasi Selesai: {est_min}m {est_sec}s"
                 )

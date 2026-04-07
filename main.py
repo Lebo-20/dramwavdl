@@ -237,7 +237,7 @@ async def process_drama_full(drama_id, chat_id, status_obj=None):
             await fast_edit(text)
 
         output_path = os.path.join(temp_dir, f"{title}.mp4")
-        merge_success = await merge_and_hardsub(video_dir, output_path, progress_callback)
+        merge_success = await merge_and_hardsub(video_dir, output_path, progress_callback, title)
         if not merge_success:
             await fast_edit("❌ Proses Hardsub/Merge Gagal.")
             return False
