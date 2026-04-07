@@ -2,13 +2,20 @@ import os
 import asyncio
 import subprocess
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+def create_progress_bar(percentage):
+    blocks = int(percentage / 10)
+    bar = "■" * blocks + "□" * (10 - blocks)
+    return f"|{bar}| {percentage}%"
 
 async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=None):
     """
     Merges all episodes and burns subtitles into each before merging.
     """
+    start_time = time.time()
     try:
         # Get all video files
         videos = [f for f in os.listdir(video_dir) if f.endswith(".mp4") and "ep_" in f]
@@ -20,7 +27,22 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
         for i, video_file in enumerate(videos, 1):
             if progress_callback:
                 percentage = int((i / (total_videos + 1)) * 100)
-                await progress_callback(f"🔥 Memproses episode {i}/{total_videos} ({percentage}%)...")
+                elapsed = time.time() - start_time
+                # Estimate remaining time
+                avg_time_per_ep = elapsed / i if i > 0 else 0
+                remaining_eps = total_videos - i + 1
+                est_remaining = avg_time_per_ep * remaining_eps
+                
+                est_min = int(est_remaining // 60)
+                est_sec = int(est_remaining % 60)
+                
+                status_text = (
+                    f"🔥 **Status: Burning Hardsub...**\n"
+                    f"🎬 Episode {i}/{total_videos}\n"
+                    f"{create_progress_bar(percentage)}\n"
+                    f"⏳ Estimasi Selesai: {est_min}m {est_sec}s"
+                )
+                await progress_callback(status_text)
                 
             ep_str = video_file.replace("ep_", "").replace(".mp4", "")
             sub_file = f"ep_{ep_str}.srt"
@@ -64,7 +86,7 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
             
         # Now concat the hard-subbed videos
         if progress_callback:
-            await progress_callback(f"🔗 Menggabungkan {total_videos} episode (95%)...")
+            await progress_callback(f"🔗 **Menggabungkan {total_videos} episode...**\n{create_progress_bar(95)}")
             
         list_file_path = os.path.join(video_dir, "list.txt")
         with open(list_file_path, "w") as f:
@@ -92,7 +114,7 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
             return False
             
         if progress_callback:
-            await progress_callback(f"✅ Selesai Menggabungkan (100%)")
+            await progress_callback(f"✅ **Selesai Menggabungkan!** (100%)\n{create_progress_bar(100)}")
             
         logger.info(f"Successfully processed hardsubs and merged into {output_path}")
         return True

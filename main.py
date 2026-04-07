@@ -97,24 +97,57 @@ async def panel(event):
     if event.chat_id != ADMIN_ID: return
     await event.reply("🎛 **DramaWave Control Panel**", buttons=get_panel_buttons())
 
+@client.on(events.NewMessage(pattern=r'/cari (.+)'))
+async def on_search(event):
+    if event.chat_id != ADMIN_ID: return
+    query = event.pattern_match.group(1)
+    status_msg = await event.reply(f"🔍 Mencari drama: **{query}**...")
+    
+    results = await search_drama(query)
+    if not results:
+        await status_msg.edit(f"❌ Tidak ditemukan hasil untuk: **{query}**")
+        return
+        
+    buttons = []
+    # Limit results to 10 for clean display
+    for d in results[:10]:
+        title = d.get("name") or d.get("title") or "Unknown"
+        drama_id = d.get("playlet_id") or d.get("id") or d.get("key")
+        if drama_id:
+            buttons.append([Button.inline(f"🎬 {title[:30]}...", data=f"dl_{drama_id}")])
+            
+    await status_msg.edit(f"✅ Ditemukan {len(results)} hasil untuk: **{query}**\nKlik tombol di bawah untuk download.", buttons=buttons)
+
 @client.on(events.CallbackQuery())
 async def panel_callback(event):
     if event.sender_id != ADMIN_ID: return
-    data = event.data
-    if data == b"start_auto":
+    data = event.data.decode()
+    
+    if data == "start_auto":
         BotState.is_auto_running = True
         await event.answer("Auto-mode started!")
-    elif data == b"stop_auto":
+        await event.edit("🎛 **DramaWave Control Panel**", buttons=get_panel_buttons())
+    elif data == "stop_auto":
         BotState.is_auto_running = False
         await event.answer("Auto-mode stopped!")
-    elif data == b"status":
+        await event.edit("🎛 **DramaWave Control Panel**", buttons=get_panel_buttons())
+    elif data == "status":
         await event.answer(f"Status: {'Running' if BotState.is_auto_running else 'Stopped'}")
-    
-    await event.edit("🎛 **DramaWave Control Panel**", buttons=get_panel_buttons())
+    elif data.startswith("dl_"):
+        drama_id = data.replace("dl_", "")
+        if BotState.is_processing:
+            await event.answer("⚠️ Sedang memproses drama lain.", alert=True)
+            return
+            
+        await event.answer("🚀 Sedang memproses download...")
+        # Auto edit the search message into a status message
+        BotState.is_processing = True
+        await process_drama_full(drama_id, event.chat_id, event)
+        BotState.is_processing = False
 
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.reply("Welcome to DramaWave Downloader Bot! 🎉\n\nGunakan perintah `/download {ID}` untuk mulai.")
+    await event.reply("Welcome to DramaWave Downloader Bot! 🎉\n\nGunakan perintah `/cari {judul}` atau `/download {ID}` untuk mulai.")
 
 @client.on(events.NewMessage(pattern=r'/download ([\w-]+)'))
 async def on_download(event):
@@ -134,92 +167,97 @@ async def on_download(event):
         processed_ids.add(drama_id)
         save_processed(processed_ids)
 
-async def process_drama_full(drama_id, chat_id, status_msg=None):
+async def process_drama_full(drama_id, chat_id, status_obj=None):
     """DramaWave Pipeline: Fetch -> Download with Subs -> Burn Subtitles -> Merge -> Upload."""
+    # status_obj can be a Message object or a Callback event (which has .edit)
+    # Helper to edit regardless of type
+    async def fast_edit(text, buttons=None):
+        try:
+            if hasattr(status_obj, 'edit'):
+                await status_obj.edit(text, buttons=buttons)
+            else:
+                # If it's a message ID or similar logic needed? Usually status_obj is the msg
+                pass
+        except Exception as e:
+            logger.warning(f"Edit failed: {e}")
+
     try:
+        await fast_edit(f"🔍 Sedang mengambil detail drama `{drama_id}`...")
         detail = await get_drama_detail(drama_id)
         if not detail:
-            if status_msg: await status_msg.edit(f"❌ Drama `{drama_id}` tidak ditemukan.")
+            await fast_edit(f"❌ Drama `{drama_id}` tidak ditemukan.")
             return False
 
         title = detail.get("name") or detail.get("title") or f"Drama_{drama_id}"
         description = detail.get("description") or detail.get("intro") or "No description."
         poster = detail.get("cover") or detail.get("poster") or ""
-        total_eps = detail.get("episodes_count") or detail.get("max_episode") or 0
         
-        if status_msg: await status_msg.edit(f"🎬 Processing **{title}** ({total_eps} episodes)...")
+        detail_items = detail.get("items", [])
+        total_eps = len(detail_items) if detail_items else 0
+        
+        await fast_edit(f"🎬 Processing **{title}** ({total_eps} episodes)...")
 
         temp_dir = tempfile.mkdtemp(prefix=f"dw_{drama_id}_")
         video_dir = os.path.join(temp_dir, "episodes")
         os.makedirs(video_dir, exist_ok=True)
 
         # 3. Download episodes (1 -> total_eps)
-        # We fetch detail once to get all items
-        detail_items = detail.get("items", [])
-        total_eps = len(detail_items) if detail_items else total_eps
-        
         semaphore = asyncio.Semaphore(5)
         
         async def download_task(ep_num):
             async with semaphore:
-                # ep_num is 1-indexed, get from detail_items directly instead of making an API call per ep
                 if ep_num - 1 >= len(detail_items):
                     return False
                 play_data = detail_items[ep_num - 1]
-                
-                # In the new Dramabos API, video comes from 1080p_mp4, or fallback
                 video_url = play_data.get("1080p_mp4") or play_data.get("720p_mp4") or play_data.get("video_url")
                 sub_list = play_data.get("subtitle_list") or []
-                
-                # Fetch Indonesian subtitle if available
                 sub_url = None
                 if isinstance(sub_list, list):
                     for s in sub_list:
-                        # Priority: id-ID, then id, then English as fallback
                         lang = s.get("language") or s.get("lang") or ""
                         if lang in ["id-ID", "id", "in"]:
                             sub_url = s.get("subtitle") or s.get("vtt")
                             break
                     if not sub_url and sub_list:
-                        sub_url = sub_list[0].get("subtitle") or sub_list[0].get("vtt") # Take first as fallback
+                        sub_url = sub_list[0].get("subtitle") or sub_list[0].get("vtt")
                 
                 if not video_url: return False
                 return await download_episode_with_subs(ep_num, video_url, sub_url, video_dir)
 
+        # Update status before download
+        await fast_edit(f"📥 **Downloading {total_eps} episode...**\nMohon tunggu sejenak.")
         download_results = await asyncio.gather(*(download_task(i) for i in range(1, total_eps + 1)))
         
         if not all(download_results):
-            if status_msg: await status_msg.edit(f"❌ Gagal mendownload beberapa episode.")
-            # return False # Continue anyway? Or return False. Standard is return False.
+            await fast_edit(f"❌ Gagal mendownload beberapa episode dari **{title}**.")
+            # return False # Continue anyway?
 
         # 4. Hardsub and Merge
         async def progress_callback(text):
-            if status_msg:
-                try:
-                    await status_msg.edit(text)
-                except:
-                    pass
+            await fast_edit(text)
 
         output_path = os.path.join(temp_dir, f"{title}.mp4")
         merge_success = await merge_and_hardsub(video_dir, output_path, progress_callback)
         if not merge_success:
-            if status_msg: await status_msg.edit("❌ Proses Hardsub/Merge Gagal.")
+            await fast_edit("❌ Proses Hardsub/Merge Gagal.")
             return False
 
         # 5. Upload
-        if status_msg: await status_msg.edit(f"📤 Mengunggah **{title}** ke Telegram...")
+        await fast_edit(f"📤 Mengunggah **{title}** ke Telegram...")
         upload_success = await upload_drama(client, chat_id, title, description, poster, output_path)
         
         if upload_success:
-            if status_msg: await status_msg.delete()
+            if hasattr(status_obj, 'delete'):
+                try: await status_obj.delete()
+                except: pass
             return True
         else:
-            if status_msg: await status_msg.edit("❌ Upload Gagal.")
+            await fast_edit("❌ Upload Gagal.")
             return False
 
     except Exception as e:
         logger.error(f"Error processing drama {drama_id}: {e}")
-        if status_msg: await status_msg.edit(f"❌ Error: {e}")
+        await fast_edit(f"❌ Error: {e}")
         return False
     finally:
         if 'temp_dir' in locals() and os.path.exists(temp_dir):
@@ -227,7 +265,6 @@ async def process_drama_full(drama_id, chat_id, status_msg=None):
 
 async def auto_mode_loop():
     logger.info("🚀 DramaWave Auto-Mode Active.")
-    is_initial = True
     
     while True:
         if not BotState.is_auto_running:
@@ -242,21 +279,20 @@ async def auto_mode_loop():
                 if not BotState.is_auto_running: break
                 
                 drama_id = drama.get("playlet_id") or drama.get("id") or drama.get("key")
-                if not drama_id:
-                    logger.warning(f"Drama found with no ID: {drama}")
-                    continue
+                if not drama_id: continue
                 
                 drama_id = str(drama_id)
                 if drama_id not in processed_ids:
                     title = drama.get("name") or drama.get("title") or "Unknown"
                     logger.info(f"✨ New drama found: {title} ({drama_id})")
                     
+                    status_msg = None
                     try:
-                        await client.send_message(ADMIN_ID, f"🆕 **Auto-Detect Drama Baru!**\n🎬 {title}\n🆔 `{drama_id}`\n⏳ Sedang memproses hardsub...")
+                        status_msg = await client.send_message(ADMIN_ID, f"🆕 **Auto-Detect Drama Baru!**\n🎬 {title}\n🆔 `{drama_id}`\n⏳ Sedang memproses hardsub...")
                     except: pass
                     
                     BotState.is_processing = True
-                    success = await process_drama_full(drama_id, AUTO_CHANNEL)
+                    success = await process_drama_full(drama_id, AUTO_CHANNEL, status_msg)
                     BotState.is_processing = False
                     
                     if success:
@@ -265,12 +301,10 @@ async def auto_mode_loop():
                         await client.send_message(ADMIN_ID, f"✅ Sukses Post: **{title}**")
                     else:
                         logger.error(f"Failed to process {title}")
-                        # Don't stop auto-mode, just skip and maybe log error
                     
-                    await asyncio.sleep(15) # Rate limit protection
+                    await asyncio.sleep(15) 
 
-            is_initial = False
-            await asyncio.sleep(3600) # Check every hour
+            await asyncio.sleep(3600) 
         except Exception as e:
             logger.error(f"Error in auto_mode: {e}")
             await asyncio.sleep(300)
