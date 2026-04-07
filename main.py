@@ -66,9 +66,20 @@ async def update_bot(event):
     import subprocess, sys
     status_msg = await event.reply("🔄 **Menarik pembaruan dari Git...**")
     try:
+        # Pastikan file __pycache__ tidak mengganggu
+        import shutil
+        if os.path.exists("__pycache__"):
+            shutil.rmtree("__pycache__", ignore_errors=True)
+            
+        # Simpan perubahan lokal sementara (seperti processed.json jika dilacak)
+        subprocess.run(["git", "stash"], capture_output=True)
+        
         # Menarik update
         process = subprocess.run(["git", "pull"], capture_output=True, text=True)
         output = process.stdout + process.stderr
+        
+        # Kembalikan perubahan lokal
+        subprocess.run(["git", "stash", "pop"], capture_output=True)
         
         if "Already up to date" in output:
             await status_msg.edit("✅ **Bot sudah versi terbaru.**")
