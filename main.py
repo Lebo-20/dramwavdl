@@ -24,6 +24,11 @@ API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 AUTO_CHANNEL = int(os.environ.get("AUTO_CHANNEL", ADMIN_ID))
+TOPIC_ID = os.environ.get("TOPIC_ID")
+if TOPIC_ID:
+    TOPIC_ID = int(TOPIC_ID)
+else:
+    TOPIC_ID = None
 PROCESSED_FILE = "processed.json"
 
 # Initialize state
@@ -142,7 +147,7 @@ async def panel_callback(event):
         await event.answer("🚀 Sedang memproses download...")
         # Auto edit the search message into a status message
         BotState.is_processing = True
-        await process_drama_full(drama_id, event.chat_id, event)
+        await process_drama_full(drama_id, AUTO_CHANNEL, event, thread_id=TOPIC_ID)
         BotState.is_processing = False
 
 @client.on(events.NewMessage(pattern='/start'))
@@ -160,14 +165,14 @@ async def on_download(event):
     status_msg = await event.reply(f"🔍 Mencari drama `{drama_id}`...")
     
     BotState.is_processing = True
-    success = await process_drama_full(drama_id, event.chat_id, status_msg)
+    success = await process_drama_full(drama_id, AUTO_CHANNEL, status_msg, thread_id=TOPIC_ID)
     BotState.is_processing = False
     
     if success:
         processed_ids.add(drama_id)
         save_processed(processed_ids)
 
-async def process_drama_full(drama_id, chat_id, status_obj=None):
+async def process_drama_full(drama_id, chat_id, status_obj=None, thread_id=None):
     """DramaWave Pipeline: Fetch -> Download with Subs -> Burn Subtitles -> Merge -> Upload."""
     # status_obj can be a Message object or a Callback event (which has .edit)
     # Helper to edit regardless of type
@@ -244,7 +249,7 @@ async def process_drama_full(drama_id, chat_id, status_obj=None):
 
         # 5. Upload
         await fast_edit(f"📤 Mengunggah **{title}** ke Telegram...")
-        upload_success = await upload_drama(client, chat_id, title, description, poster, output_path)
+        upload_success = await upload_drama(client, chat_id, title, description, poster, output_path, thread_id=thread_id)
         
         if upload_success:
             if hasattr(status_obj, 'delete'):
@@ -292,7 +297,7 @@ async def auto_mode_loop():
                     except: pass
                     
                     BotState.is_processing = True
-                    success = await process_drama_full(drama_id, AUTO_CHANNEL, status_msg)
+                    success = await process_drama_full(drama_id, AUTO_CHANNEL, status_msg, thread_id=TOPIC_ID)
                     BotState.is_processing = False
                     
                     if success:
