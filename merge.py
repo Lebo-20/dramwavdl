@@ -33,6 +33,30 @@ def auto_crf(total_episodes: int) -> int:
     logger.info(f"🎛️ Auto CRF: {crf} (untuk {total_episodes} episode)")
     return crf
 
+async def get_video_dimensions(video_path):
+    """
+    Mengambil lebar dan tinggi video menggunakan ffprobe.
+    """
+    cmd = [
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0", video_path
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode == 0:
+            w_h = stdout.decode().strip().split('x')
+            if len(w_h) >= 2:
+                return int(w_h[0]), int(w_h[1])
+    except Exception as e:
+        logger.warning(f"Gagal deteksi resolusi {video_path}: {e}")
+    return None, None
+
 def create_progress_bar(percentage):
     blocks = int(percentage / 10)
     bar = "■" * blocks + "□" * (10 - blocks)
@@ -90,7 +114,23 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
             # ── Burn subtitle jika ada ────────────────────────────────────
             if os.path.exists(sub_path):
                 sub_path_fixed = sub_path.replace("\\", "/").replace(":", "\\:")
-                style = "Fontname=Standard Symbols PS,Fontsize=10,PrimaryColour=&H00FFFFFF,Bold=1,Outline=1,OutlineColour=&H000000,MarginV=90"
+                
+                # Cek resolusi video: Jika bukan 9:16, gunakan style khusus
+                width, height = await get_video_dimensions(input_path)
+                is_9_16 = False
+                if width and height:
+                    # 9/16 = 0.5625. Beri toleransi.
+                    ratio = width / height
+                    if 0.5 <= ratio <= 0.6:
+                        is_9_16 = True
+                
+                if not is_9_16:
+                    # Nimbus Sans Narrow, putih, size 24, offset 8
+                    style = "Fontname=Nimbus Sans Narrow,Fontsize=24,PrimaryColour=&H00FFFFFF,Bold=1,Outline=1,OutlineColour=&H000000,MarginV=8"
+                    logger.info(f"📐 Video bukan 9:16 ({width}x{height}) -> Menggunakan style Nimbus Sans")
+                else:
+                    # Default (biasanya untuk video vertikal 9:16)
+                    style = "Fontname=Standard Symbols PS,Fontsize=10,PrimaryColour=&H00FFFFFF,Bold=1,Outline=1,OutlineColour=&H000000,MarginV=90"
                 
                 command = [
                     "ffmpeg", "-y", "-i", input_path,
