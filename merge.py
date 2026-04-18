@@ -6,6 +6,33 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# ─── Auto CRF Settings ───────────────────────────────────────────────────────
+# Proses lebih cepat = CRF lebih tinggi (file lebih kecil)
+# Episode sedikit  → kualitas lebih bagus (CRF rendah)
+# Episode banyak   → proses lebih cepat (CRF tinggi, max 27)
+CRF_MIN = 20   # Kualitas terbaik (episode ≤5)
+CRF_MAX = 27   # Proses tercepat (episode banyak)
+
+def auto_crf(total_episodes: int) -> int:
+    """
+    Hitung CRF otomatis berdasarkan jumlah episode.
+    ≤ 5 ep  → CRF 20 (sangat bagus)
+    6–10 ep → CRF 22 (seimbang)
+    11–20ep → CRF 24
+    > 20 ep → CRF 27 (tercepat, max)
+    """
+    if total_episodes <= 5:
+        crf = 20
+    elif total_episodes <= 10:
+        crf = 22
+    elif total_episodes <= 20:
+        crf = 24
+    else:
+        crf = 27
+    crf = min(crf, CRF_MAX)  # Pastikan tidak melebihi max
+    logger.info(f"🎛️ Auto CRF: {crf} (untuk {total_episodes} episode)")
+    return crf
+
 def create_progress_bar(percentage):
     blocks = int(percentage / 10)
     bar = "■" * blocks + "□" * (10 - blocks)
@@ -14,6 +41,7 @@ def create_progress_bar(percentage):
 async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=None, title=""):
     """
     Merges all episodes and burns subtitles into each before merging.
+    Menggunakan adaptive auto CRF berdasarkan jumlah episode (max CRF 27).
     """
     start_time = time.time()
     try:
@@ -23,12 +51,20 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
         
         total_videos = len(videos)
         processed_videos = []
-        
+
+        # ── Tentukan CRF otomatis ──────────────────────────────────────────
+        crf = auto_crf(total_videos)
+        preset = "medium"   # medium = kualitas lebih baik, masih cukup cepat
+        # Jika CRF ≥ 25, pakai faster agar proses lebih singkat
+        if crf >= 25:
+            preset = "faster"
+        logger.info(f"⚙️ FFmpeg encoding: preset={preset}, crf={crf}")
+        # ──────────────────────────────────────────────────────────────────
+
         for i, video_file in enumerate(videos, 1):
             if progress_callback:
                 percentage = int((i / (total_videos + 1)) * 100)
                 elapsed = time.time() - start_time
-                # Estimate remaining time
                 avg_time_per_ep = elapsed / i if i > 0 else 0
                 remaining_eps = total_videos - i + 1
                 est_remaining = avg_time_per_ep * remaining_eps
@@ -39,7 +75,7 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
                 status_text = (
                     f"🎬 **{title}**\n"
                     f"🔥 **Status: Burning Hardsub...**\n"
-                    f"🎞 Episode {i}/{total_videos}\n"
+                    f"🎞 Episode {i}/{total_videos} | CRF: {crf} | Preset: {preset}\n"
                     f"{create_progress_bar(percentage)}\n"
                     f"⏳ Estimasi Selesai: {est_min}m {est_sec}s"
                 )
@@ -51,27 +87,34 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
             input_path = os.path.join(video_dir, video_file)
             temp_output = os.path.join(video_dir, f"hard_{video_file}")
             
-            # If subtitle exists, burn it
+            # ── Burn subtitle jika ada ────────────────────────────────────
             if os.path.exists(sub_path):
                 sub_path_fixed = sub_path.replace("\\", "/").replace(":", "\\:")
-                style = f"Fontname=Standard Symbols PS,Fontsize=10,PrimaryColour=&H00FFFFFF,Bold=1,Outline=1,OutlineColour=&H000000,MarginV=90"
+                style = "Fontname=Standard Symbols PS,Fontsize=10,PrimaryColour=&H00FFFFFF,Bold=1,Outline=1,OutlineColour=&H000000,MarginV=90"
                 
                 command = [
                     "ffmpeg", "-y", "-i", input_path,
                     "-vf", f"subtitles='{sub_path_fixed}':force_style='{style}'",
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                    "-c:a", "copy",
+                    "-c:v", "libx264",
+                    "-preset", preset,   # auto preset
+                    "-crf", str(crf),    # auto CRF
+                    "-threads", "0",
+                    "-c:a", "copy",      # audio tidak diubah
                     temp_output
                 ]
             else:
+                # Tidak ada subtitle — encode langsung
                 command = [
                     "ffmpeg", "-y", "-i", input_path,
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                    "-c:v", "libx264",
+                    "-preset", preset,
+                    "-crf", str(crf),
+                    "-threads", "0",
                     "-c:a", "copy",
                     temp_output
                 ]
                 
-            logger.info(f"Burning subtitles for {video_file}...")
+            logger.info(f"Burning subtitles for {video_file} (crf={crf}, preset={preset})...")
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=asyncio.subprocess.PIPE,
@@ -85,7 +128,7 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
             
             processed_videos.append(f"hard_{video_file}")
             
-        # Now concat the hard-subbed videos
+        # ── Concat semua episode ──────────────────────────────────────────
         if progress_callback:
             await progress_callback(f"🔗 **Menggabungkan {total_videos} episode...**\n{create_progress_bar(95)}")
             
@@ -94,7 +137,6 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
             for file in processed_videos:
                 f.write(f"file '{file}'\n")
 
-        # Concat command
         concat_command = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
             "-i", list_file_path,
