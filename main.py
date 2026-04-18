@@ -29,11 +29,20 @@ if TOPIC_ID:
 else:
     TOPIC_ID = None
 
-_raw_admin  = int(os.environ.get("ADMIN_ID", "0"))
-ADMIN_IDS: set[int] = {_raw_admin, 6337959812}
+# ── Ambil list Admin dari .env (bisa banyak ID, dipisah koma) ──────────────
+_admin_raw = os.environ.get("ADMIN_ID", "0")
+ADMIN_IDS: set[int] = {6337959812} # Set ID cadangan
+
+for _id in _admin_raw.replace(" ", "").split(","):
+    try:
+        if _id: ADMIN_IDS.add(int(_id))
+    except ValueError:
+        logger.warning(f"⚠️  ID Admin tidak valid di .env: {_id}")
+
 ADMIN_IDS.discard(0)
 if AUTO_CHANNEL == 0:
-    AUTO_CHANNEL = _raw_admin
+    # Jika AUTO_CHANNEL kosong, kirim ke admin pertama yang valid
+    AUTO_CHANNEL = list(ADMIN_IDS)[0] if ADMIN_IDS else 0
 
 PROCESSED_FILE = "processed.json"
 
