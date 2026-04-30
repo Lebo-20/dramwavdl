@@ -13,7 +13,7 @@ from api import (
     get_drama_detail, get_episode_data, get_popular_feed, search_drama
 )
 from downloader import aria2c_download, download_episode_with_subs
-from merge import merge_and_hardsub
+from merge import merge_and_hardsub, split_video
 from uploader import upload_drama
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -793,17 +793,28 @@ async def process_drama_full(
             )
             return False
 
-        # ── Tahap 3: Upload ───────────────────────────────────────────────
-        await update_stage("📤 Upload ke Telegram", 90, force=True)
-        await edit(
-            f"🎬 **{title}**\n"
-            f"📤 **Upload ke Telegram...**\n"
-            f"{build_bar(90)}\n⏳ Sedang upload..."
-        )
-
-        upload_success = await upload_drama(
-            client, chat_id, title, description, poster, output_path, thread_id=thread_id
-        )
+        # ── Checkpoint 4: Splitting (Jika > 2GB) ───────────────────────────
+        video_parts = await split_video(output_path, max_size_gb=1.99)
+        
+        upload_success = True
+        for i, part_path in enumerate(video_parts):
+            part_title = title
+            if len(video_parts) > 1:
+                part_title = f"{title} (Part {i+1})"
+                await update_stage(f"📤 Upload {part_title}", 90, force=True)
+            
+            await edit(
+                f"🎬 **{title}**\n"
+                f"📤 **Upload {part_title} ke Telegram...**\n"
+                f"{build_bar(90)}\n⏳ Sedang upload..."
+            )
+            
+            success = await upload_drama(
+                client, chat_id, part_title, description, poster, part_path, thread_id=thread_id
+            )
+            if not success:
+                upload_success = False
+                break
 
         if upload_success:
             await update_stage("✅ Selesai", 100, force=True)

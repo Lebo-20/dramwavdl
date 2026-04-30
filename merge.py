@@ -3,6 +3,7 @@ import asyncio
 import subprocess
 import logging
 import time
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
         preset = "medium"   # medium = kualitas lebih baik, masih cukup cepat
         # Jika CRF ≥ 25, pakai faster agar proses lebih singkat
         if crf >= 25:
-            preset = "faster"
+            preset = "veryfast"
         logger.info(f"⚙️ FFmpeg encoding: preset={preset}, crf={crf}")
         # ──────────────────────────────────────────────────────────────────
 
@@ -204,3 +205,82 @@ async def merge_and_hardsub(video_dir: str, output_path: str, progress_callback=
     except Exception as e:
         logger.error(f"Error during hardsub/merge: {e}")
         return False
+
+async def split_video(video_path: str, max_size_gb: float = 1.99) -> list[str]:
+    """
+    Splits a video into parts if it exceeds max_size_gb.
+    Returns a list of paths to the split parts.
+    """
+    file_size = os.path.getsize(video_path)
+    max_size_bytes = max_size_gb * 1024 * 1024 * 1024
+    
+    if file_size <= max_size_bytes:
+        return [video_path]
+    
+    logger.info(f"📏 File size ({file_size} bytes) exceeds {max_size_gb} GB. Splitting...")
+    
+    # Get total duration
+    cmd_duration = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", video_path
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *cmd_duration,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await process.communicate()
+    if process.returncode != 0:
+        logger.error(f"Failed to get duration for splitting: {stderr.decode()}")
+        return [video_path]
+    
+    total_duration = float(stdout.decode().strip())
+    
+    # Estimate segment time
+    # Time = (Max Size / Total Size) * Total Duration
+    # We use a 5% safety margin to ensure it's under the limit
+    segment_time = (max_size_bytes / file_size) * total_duration * 0.95
+    
+    video_dir = os.path.dirname(video_path)
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    output_pattern = os.path.join(video_dir, f"{base_name}_part%02d.mp4")
+    
+    split_command = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-c", "copy",
+        "-map", "0",
+        "-f", "segment",
+        "-segment_time", str(segment_time),
+        "-reset_timestamps", "1",
+        output_pattern
+    ]
+    
+    logger.info(f"✂️ Splitting video into parts with segment_time={segment_time}s...")
+    process = await asyncio.create_subprocess_exec(
+        *split_command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await process.communicate()
+    
+    if process.returncode != 0:
+        logger.error(f"FFmpeg splitting failed:\n{stderr.decode()}")
+        return [video_path]
+    
+    # Find all created parts
+    parts = []
+    i = 0
+    while True:
+        part_name = f"{base_name}_part{i:02d}.mp4"
+        part_path = os.path.join(video_dir, part_name)
+        if os.path.exists(part_path):
+            parts.append(part_path)
+            i += 1
+        else:
+            break
+            
+    if not parts:
+        return [video_path]
+        
+    logger.info(f"✅ Video split into {len(parts)} parts.")
+    return parts
