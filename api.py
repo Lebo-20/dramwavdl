@@ -4,7 +4,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://dramawave.dramabos.my.id/api"
+BASE_URL = "https://dramawave.dramabos.online/api"
 TOKEN = "A8D6AB170F7B89F2182561D3B32F390D"
 
 async def get_popular_feed(page=1):
